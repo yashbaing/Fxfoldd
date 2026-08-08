@@ -1,0 +1,22 @@
+{
+  "name": "fxfold",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Multicurrency trade compression for UAE SMEs — net first, FX the rest, settle once on Arc.",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @fxfold/solver && npm run build -w @fxfold/web",
+    "dev": "npm run dev -w @fxfold/web",
+    "solver:demo": "npm run demo -w @fxfold/solver",
+    "solver:test": "npm run test -w @fxfold/solver",
+    "contracts:build": "cd contracts && forge build",
+    "contracts:test": "cd contracts && forge test -vv",
+    "deploy:arc": "cd contracts && forge script script/Deploy.s.sol:Deploy --rpc-url $ARC_TESTNET_RPC_URL --broadcast -vvvv",
+    "seed:arc": "npm run seed -w @fxfold/solver"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

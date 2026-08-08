@@ -1,0 +1,31 @@
+{
+  "name": "@fxfold/solver",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./demoData": {
+      "types": "./dist/demoData.d.ts",
+      "import": "./dist/demoData.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "demo": "tsx src/runDemo.ts",
+    "test": "tsx --test src/solver.test.ts",
+    "seed": "tsx src/seedArc.ts"
+  },
+  "dependencies": {
+    "viem": "^2.28.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}
