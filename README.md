@@ -93,11 +93,32 @@ npm run solver:test
 ### Run demo UI
 
 ```bash
-cp .env.example packages/web/.env   # fill deployed addresses
+cp packages/web/.env.production packages/web/.env
 npm run dev
 ```
 
 Open `http://localhost:5173` → press **FOLD**.
+
+## Deploy on Vercel
+
+This repo is Vercel-ready via root [`vercel.json`](./vercel.json).
+
+1. Import **yashbaing/Fxfoldd** in [Vercel](https://vercel.com/new)
+2. Framework preset: **Vite** (auto from `vercel.json`)
+3. Keep defaults:
+   - **Install:** `npm install`
+   - **Build:** `npm run build -w @fxfold/web`
+   - **Output:** `packages/web/dist`
+4. Deploy — Arc contract addresses are already baked into `packages/web/.env.production`
+
+Optional CLI:
+
+```bash
+npm i -g vercel
+vercel --prod
+```
+
+No secrets required for the public demo (only public `VITE_*` addresses).
 
 ### Deploy / re-seed on Arc
 

@@ -4,6 +4,9 @@ build/
 .env
 .env.*
 !.env.example
+!.env.production
+packages/web/.env.production
+!packages/web/.env.production
 .secrets/
 coverage/
 cache/

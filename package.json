@@ -7,7 +7,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build -w @fxfold/solver && npm run build -w @fxfold/web",
+    "build": "npm run build -w @fxfold/web",
+    "build:all": "npm run build -w @fxfold/solver && npm run build -w @fxfold/web",
     "dev": "npm run dev -w @fxfold/web",
     "solver:demo": "npm run demo -w @fxfold/solver",
     "solver:test": "npm run test -w @fxfold/solver",
@@ -18,5 +19,6 @@
   },
   "engines": {
     "node": ">=20"
-  }
+  },
+  "packageManager": "npm@10.9.7"
 }
