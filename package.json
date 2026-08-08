@@ -1,0 +1,10 @@
+{
+  "name": "fxfold",
+  "private": true,
+  "workspaces": ["packages/*", "frontend"],
+  "scripts": {
+    "build": "npm run build --workspace=@fxfold/solver && npm run build --workspace=frontend",
+    "dev": "npm run dev --workspace=frontend",
+    "deploy:contracts": "cd contracts && forge script script/Deploy.s.sol --rpc-url https://rpc.testnet.arc.io --broadcast"
+  }
+}
