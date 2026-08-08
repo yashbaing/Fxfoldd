@@ -37,6 +37,18 @@ Seeded: **Clearing Round `#1`** — approved, peers ready, waiting for your fund
 
 Deployment artifact: [`contracts/deployments/arc-testnet.json`](./contracts/deployments/arc-testnet.json)
 
+## Participant demo flow
+
+The connected wallet is **one real SME** (RAK Metals) inside the 8-SME network:
+
+1. **Network** — 8 SMEs / 31 invoices; your node is highlighted  
+2. **Connect as SME** — wallet maps to you; see pay/receive in AED·USD·EUR  
+3. **Join Round** — you join; 7 peers are pre-authorized → `8 / 8 ready`  
+4. **Run FOLD** — off-chain compression (no wallet popup) + **Your Result**  
+5. **Residual FX** — network residual + your residual  
+6. **Fund Net Position** — real Arc USDC tx from your wallet (not admin)  
+7. **Settled** — tx hash + Arc Explorer + round ID  
+
 ## Demo metrics (deterministic solver)
 
 Against the 8-SME / 31-invoice UAE graph:
