@@ -35,7 +35,7 @@ contract FXFoldTest is Test {
         adapter = new StableFXAdapter(operator);
         settlement = new AtomicSettlement(
             operator, address(registry), address(clearing), address(usdc), address(eurc), address(adapter), operator
-        );
+        ); // releaseReceiver = operator
         registry.setSettlement(address(settlement));
         clearing.setSettlement(address(settlement));
         vm.stopPrank();
@@ -110,5 +110,38 @@ contract FXFoldTest is Test {
         assertEq(uint256(registry.getObligation(id2).status), uint256(ObligationRegistry.Status.Settled));
         assertEq(uint256(registry.getObligation(id3).status), uint256(ObligationRegistry.Status.Settled));
         assertTrue(settlement.settledRounds(roundId));
+    }
+
+    function test_liveSmeJoinsAndFundsNetPosition() public {
+        vm.startPrank(operator);
+        uint256 id1 = registry.proposeObligation(
+            keccak256("inv-a"), a, b, 50_000e6, CUR_USD, SET_USDC, uint64(block.timestamp + 7 days)
+        );
+        address[] memory participants = new address[](2);
+        participants[0] = a;
+        participants[1] = b;
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id1;
+        ClearingRound.NetPosition[] memory nets = new ClearingRound.NetPosition[](2);
+        nets[0] = ClearingRound.NetPosition(a, int128(-5e6), 0, 5e6, 0);
+        nets[1] = ClearingRound.NetPosition(b, int128(5e6), 0, 0, 0);
+        ClearingRound.FxLeg[] memory legs = new ClearingRound.FxLeg[](0);
+        registry.markIncluded(ids);
+        uint256 roundId =
+            clearing.proposeRound(keccak256("r2"), participants, ids, nets, legs, 5e6, 0, 50_000e6, 0);
+        clearing.operatorApproveAll(roundId);
+        settlement.prepareParticipantRound(roundId, 5e6, 0);
+        vm.stopPrank();
+
+        // Live SME wallet = address(a)
+        vm.startPrank(a);
+        usdc.approve(address(settlement), type(uint256).max);
+        settlement.joinRound(roundId);
+        settlement.fundNetPosition(roundId);
+        vm.stopPrank();
+
+        assertTrue(settlement.positionFunded(roundId));
+        assertTrue(settlement.settledRounds(roundId));
+        assertEq(settlement.joinedWallet(roundId), a);
     }
 }

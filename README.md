@@ -17,14 +17,23 @@ FXFold nets SME trade obligations across currencies, matches opposing FX demand 
 
 | Contract | Address |
 |---|---|
-| ObligationRegistry | [`0xdCEA9245A47D5a75333E3510015D431BF93B3963`](https://testnet.arcscan.app/address/0xdCEA9245A47D5a75333E3510015D431BF93B3963) |
-| ClearingRound | [`0x2e3B67b1457801F70875B77804ed2b76963C5160`](https://testnet.arcscan.app/address/0x2e3B67b1457801F70875B77804ed2b76963C5160) |
-| AtomicSettlement | [`0x09B8B6b85907bfa62F8e9B76d20fFd4d4547BC37`](https://testnet.arcscan.app/address/0x09B8B6b85907bfa62F8e9B76d20fFd4d4547BC37) |
-| StableFXAdapter (demo) | [`0x35FBbf682006867968249327bB5E53734eE427D0`](https://testnet.arcscan.app/address/0x35FBbf682006867968249327bB5E53734eE427D0) |
+| ObligationRegistry | [`0xabb7…E862`](https://testnet.arcscan.app/address/0xabb7649BCa61379536197D420B0D37f85CdfE862) |
+| ClearingRound | [`0x6017…6d1a`](https://testnet.arcscan.app/address/0x60171ca8455F41A82c041607e4dE069BecAF6d1a) |
+| AtomicSettlement | [`0x7272…5Cf1`](https://testnet.arcscan.app/address/0x72721853fb5253AaCf19d567A529dF0664bd5Cf1) |
+| StableFXAdapter (demo) | [`0xF092…63cA`](https://testnet.arcscan.app/address/0xF092eB2152dd9AD2CaF3Dd76c44194De331263cA) |
 | USDC | `0x3600000000000000000000000000000000000000` |
 | EURC | `0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a` |
 
-Seeded demo: **Clearing Round `#1`** — 12 accepted obligations, 8 SME participants, operator-approved and ready for atomic settlement.
+### Participant demo flow
+You are **one real SME** (RAK Metals) inside an 8-SME network. The other 7 are pre-authorized.
+
+1. Connect wallet → mapped to your SME  
+2. **Join Clearing Round** → `8 / 8 SMEs ready`  
+3. **Run FOLD** (off-chain) → see network compression + **Your Result**  
+4. **Fund Net Position** → real Arc USDC tx (5 USDC demo deposit)  
+5. Round settles → tx hash + Arc Explorer  
+
+Seeded: **Clearing Round `#1`** — approved, peers ready, waiting for your fund.
 
 Deployment artifact: [`contracts/deployments/arc-testnet.json`](./contracts/deployments/arc-testnet.json)
 

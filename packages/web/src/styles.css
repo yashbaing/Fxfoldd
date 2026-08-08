@@ -324,6 +324,38 @@ h2,
   gap: 1rem;
 }
 
+.you-panel {
+  margin-top: 1.75rem;
+  padding: 1.25rem 0 0;
+  border-top: 1px solid var(--line);
+}
+
+.you-compare {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 1rem;
+  align-items: start;
+  margin-top: 0.75rem;
+}
+
+.you-arrow {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  color: var(--copper);
+  padding-top: 1.5rem;
+}
+
+@media (max-width: 800px) {
+  .you-compare {
+    grid-template-columns: 1fr;
+  }
+
+  .you-arrow {
+    padding: 0;
+    text-align: center;
+  }
+}
+
 .finale {
   text-align: left;
   padding: 2rem 0;

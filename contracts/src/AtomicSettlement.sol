@@ -7,8 +7,8 @@ import {ClearingRound} from "./ClearingRound.sol";
 
 /**
  * @title AtomicSettlement
- * @notice Executes a clearing round atomically: residual FX via adapter, net transfers, settle obligations.
- *         Entire round succeeds or reverts — Arc as programmable multi-party settlement.
+ * @notice Escrow + atomic clearing settlement on Arc.
+ *         Demo path: one live SME joins, funds their net position; peers are pre-authorized.
  */
 contract AtomicSettlement {
     struct TransferLeg {
@@ -24,13 +24,24 @@ contract AtomicSettlement {
     address public immutable eurc;
     address public operator;
     address public stableFxAdapter;
-    address public liquidityProvider;
+    address public releaseReceiver;
 
     mapping(uint256 => bool) public settledRounds;
     mapping(address => mapping(address => uint256)) public deposits; // token => account => amount
 
+    // Participant demo flow
+    mapping(uint256 => address) public joinedWallet;
+    mapping(uint256 => bool) public peersReady;
+    mapping(uint256 => bool) public positionFunded;
+    mapping(uint256 => uint256) public requiredUsdc;
+    mapping(uint256 => uint256) public requiredEurc;
+    mapping(uint256 => bytes32) public lastSettleTxHint;
+
     event Deposited(address indexed token, address indexed account, uint256 amount);
     event Withdrawn(address indexed token, address indexed account, uint256 amount);
+    event JoinedRound(uint256 indexed roundId, address indexed wallet);
+    event PeersReady(uint256 indexed roundId);
+    event NetPositionFunded(uint256 indexed roundId, address indexed wallet, uint256 usdcAmount, uint256 eurcAmount);
     event RoundSettled(
         uint256 indexed roundId,
         bytes32 indexed roundHash,
@@ -42,15 +53,19 @@ contract AtomicSettlement {
     event ResidualFxExecuted(uint256 indexed roundId, address indexed adapter, uint128 fromAmount, uint128 toAmount);
     event OperatorUpdated(address indexed operator);
     event AdapterUpdated(address indexed adapter);
-    event LiquidityProviderUpdated(address indexed lp);
+    event ReleaseReceiverUpdated(address indexed receiver);
 
     error NotOperator();
     error AlreadySettled();
     error RoundNotApproved();
     error InsufficientDeposit();
     error TransferFailed();
-    error LengthMismatch();
     error ZeroAddress();
+    error AlreadyJoined();
+    error NotJoined();
+    error PeersNotReady();
+    error AlreadyFunded();
+    error NotConfigured();
 
     modifier onlyOperator() {
         if (msg.sender != operator) revert NotOperator();
@@ -64,7 +79,7 @@ contract AtomicSettlement {
         address usdc_,
         address eurc_,
         address adapter_,
-        address lp_
+        address releaseReceiver_
     ) {
         if (
             operator_ == address(0) || registry_ == address(0) || clearing_ == address(0) || usdc_ == address(0)
@@ -76,7 +91,7 @@ contract AtomicSettlement {
         usdc = usdc_;
         eurc = eurc_;
         stableFxAdapter = adapter_;
-        liquidityProvider = lp_;
+        releaseReceiver = releaseReceiver_ == address(0) ? operator_ : releaseReceiver_;
     }
 
     function setOperator(address operator_) external onlyOperator {
@@ -89,9 +104,9 @@ contract AtomicSettlement {
         emit AdapterUpdated(adapter_);
     }
 
-    function setLiquidityProvider(address lp_) external onlyOperator {
-        liquidityProvider = lp_;
-        emit LiquidityProviderUpdated(lp_);
+    function setReleaseReceiver(address receiver_) external onlyOperator {
+        releaseReceiver = receiver_;
+        emit ReleaseReceiverUpdated(receiver_);
     }
 
     function deposit(address token, uint256 amount) external {
@@ -109,13 +124,61 @@ contract AtomicSettlement {
     }
 
     /**
-     * @notice Atomically settle an approved clearing round.
-     * @param roundId Clearing round id
-     * @param transfers Net settlement transfers (pull from deposits / LP)
-     * @param fxFromToken Residual FX sell token (address(0) if none)
-     * @param fxToToken Residual FX buy token
-     * @param fxFromAmount Residual FX from amount
-     * @param fxToAmount Residual FX to amount (quoted)
+     * @notice Operator configures the live-SME funding requirement and marks 7 peers ready.
+     */
+    function prepareParticipantRound(uint256 roundId, uint256 usdcRequired, uint256 eurcRequired)
+        external
+        onlyOperator
+    {
+        requiredUsdc[roundId] = usdcRequired;
+        requiredEurc[roundId] = eurcRequired;
+        peersReady[roundId] = true;
+        emit PeersReady(roundId);
+    }
+
+    /**
+     * @notice Connected SME joins the clearing round (one live wallet per round).
+     */
+    function joinRound(uint256 roundId) external {
+        if (settledRounds[roundId]) revert AlreadySettled();
+        address existing = joinedWallet[roundId];
+        if (existing != address(0) && existing != msg.sender) revert AlreadyJoined();
+        joinedWallet[roundId] = msg.sender;
+        emit JoinedRound(roundId, msg.sender);
+    }
+
+    /**
+     * @notice Live SME funds their final net position. When peers are ready, the round settles on Arc.
+     * @dev Real USDC/EURC transferFrom the connected wallet — not an admin action.
+     */
+    function fundNetPosition(uint256 roundId) external {
+        if (settledRounds[roundId]) revert AlreadySettled();
+        if (joinedWallet[roundId] != msg.sender) revert NotJoined();
+        if (!peersReady[roundId]) revert PeersNotReady();
+        if (positionFunded[roundId]) revert AlreadyFunded();
+        if (!clearing.isFullyApproved(roundId)) revert RoundNotApproved();
+
+        uint256 usdcAmount = requiredUsdc[roundId];
+        uint256 eurcAmount = requiredEurc[roundId];
+        if (usdcAmount == 0 && eurcAmount == 0) revert NotConfigured();
+
+        if (usdcAmount > 0) {
+            if (!IERC20Minimal(usdc).transferFrom(msg.sender, address(this), usdcAmount)) revert TransferFailed();
+            deposits[usdc][msg.sender] += usdcAmount;
+        }
+        if (eurcAmount > 0) {
+            if (!IERC20Minimal(eurc).transferFrom(msg.sender, address(this), eurcAmount)) revert TransferFailed();
+            deposits[eurc][msg.sender] += eurcAmount;
+        }
+
+        positionFunded[roundId] = true;
+        emit NetPositionFunded(roundId, msg.sender, usdcAmount, eurcAmount);
+
+        _finalizeParticipantSettlement(roundId, usdcAmount, eurcAmount);
+    }
+
+    /**
+     * @notice Operator path for full transfer-leg settlement (unchanged advanced path).
      */
     function settleRound(
         uint256 roundId,
@@ -128,39 +191,71 @@ contract AtomicSettlement {
         if (settledRounds[roundId]) revert AlreadySettled();
         if (!clearing.isFullyApproved(roundId)) revert RoundNotApproved();
 
-        (
-            bytes32 roundHash,
-            ,
-            ,
-            ,
-            ,
-            uint128 externalLiquidityUsd,
-            uint128 externalFxUsd,
-            ,
-        ) = clearing.rounds(roundId);
+        (bytes32 roundHash,,,,, uint128 externalLiquidityUsd, uint128 externalFxUsd,,) = clearing.rounds(roundId);
 
-        // 1) Residual FX via StableFX adapter (mock or live)
         if (fxFromAmount > 0 && stableFxAdapter != address(0)) {
             _executeResidualFx(roundId, fxFromToken, fxToToken, fxFromAmount, fxToAmount);
         }
 
-        // 2) Net transfers from deposits (LP may fund gaps)
         for (uint256 i = 0; i < transfers.length; i++) {
             TransferLeg calldata t = transfers[i];
             _payFromDeposit(t.token, t.from, t.to, t.amount);
         }
 
-        // 3) Mark obligations settled
         uint256[] memory obligationIds = clearing.getObligationIds(roundId);
         registry.markSettled(obligationIds);
-
-        // 4) Mark round settled
         settledRounds[roundId] = true;
         clearing.markSettled(roundId);
 
         emit RoundSettled(
             roundId, roundHash, transfers.length, obligationIds.length, externalLiquidityUsd, externalFxUsd
         );
+    }
+
+    function fundingStatus(uint256 roundId)
+        external
+        view
+        returns (
+            address wallet,
+            bool peers,
+            bool funded,
+            bool settled,
+            uint256 usdcRequired,
+            uint256 eurcRequired
+        )
+    {
+        return (
+            joinedWallet[roundId],
+            peersReady[roundId],
+            positionFunded[roundId],
+            settledRounds[roundId],
+            requiredUsdc[roundId],
+            requiredEurc[roundId]
+        );
+    }
+
+    function _finalizeParticipantSettlement(uint256 roundId, uint256 usdcAmount, uint256 eurcAmount) internal {
+        (bytes32 roundHash,,,,, uint128 externalLiquidityUsd, uint128 externalFxUsd,,) = clearing.rounds(roundId);
+
+        // Move funded net position to receiver (LP / clearing liquidity sink) for demo finality
+        address sink = releaseReceiver;
+        if (usdcAmount > 0) {
+            deposits[usdc][msg.sender] -= usdcAmount;
+            if (!IERC20Minimal(usdc).transfer(sink, usdcAmount)) revert TransferFailed();
+        }
+        if (eurcAmount > 0) {
+            deposits[eurc][msg.sender] -= eurcAmount;
+            if (!IERC20Minimal(eurc).transfer(sink, eurcAmount)) revert TransferFailed();
+        }
+
+        uint256[] memory obligationIds = clearing.getObligationIds(roundId);
+        registry.markSettled(obligationIds);
+
+        settledRounds[roundId] = true;
+        clearing.markSettled(roundId);
+        lastSettleTxHint[roundId] = roundHash;
+
+        emit RoundSettled(roundId, roundHash, 1, obligationIds.length, externalLiquidityUsd, externalFxUsd);
     }
 
     function _executeResidualFx(
@@ -170,8 +265,7 @@ contract AtomicSettlement {
         uint128 fromAmount,
         uint128 toAmount
     ) internal {
-        address lp = liquidityProvider == address(0) ? operator : liquidityProvider;
-        // Pull sell-side liquidity from LP deposit into adapter
+        address lp = releaseReceiver;
         uint256 fromBal = deposits[fromToken][lp];
         if (fromBal < fromAmount) revert InsufficientDeposit();
         deposits[fromToken][lp] = fromBal - fromAmount;
@@ -180,7 +274,12 @@ contract AtomicSettlement {
 
         (bool ok, bytes memory data) = stableFxAdapter.call(
             abi.encodeWithSignature(
-                "executeRfq(address,address,uint256,uint256,address)", fromToken, toToken, uint256(fromAmount), uint256(toAmount), address(this)
+                "executeRfq(address,address,uint256,uint256,address)",
+                fromToken,
+                toToken,
+                uint256(fromAmount),
+                uint256(toAmount),
+                address(this)
             )
         );
         if (!ok) {
@@ -189,29 +288,23 @@ contract AtomicSettlement {
             }
         }
 
-        // Credit received buy token to LP deposit book
         deposits[toToken][lp] += toAmount;
         emit ResidualFxExecuted(roundId, stableFxAdapter, fromAmount, toAmount);
     }
 
     function _payFromDeposit(address token, address from, address to, uint128 amount) internal {
         if (amount == 0) return;
-        address payer = from;
-        uint256 bal = deposits[token][payer];
+        uint256 bal = deposits[token][from];
         if (bal < amount) {
-            // Fall back to LP funding the liquidity gap
-            address lp = liquidityProvider == address(0) ? operator : liquidityProvider;
+            address lp = releaseReceiver;
             uint256 need = amount - bal;
             uint256 lpBal = deposits[token][lp];
             if (lpBal < need) revert InsufficientDeposit();
-            if (bal > 0) {
-                deposits[token][payer] = 0;
-            }
+            if (bal > 0) deposits[token][from] = 0;
             deposits[token][lp] = lpBal - need;
         } else {
-            deposits[token][payer] = bal - amount;
+            deposits[token][from] = bal - amount;
         }
         if (!IERC20Minimal(token).transfer(to, amount)) revert TransferFailed();
     }
-
-    }
+}

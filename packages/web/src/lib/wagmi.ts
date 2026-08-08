@@ -25,5 +25,7 @@ export const CONTRACTS = {
   stableFxAdapter: (import.meta.env.VITE_STABLEFX_ADAPTER ?? "") as `0x${string}`,
 };
 
+export const ROUND_ID = BigInt(import.meta.env.VITE_ROUND_ID ?? "1");
+
 export const EXPLORER =
   import.meta.env.VITE_EXPLORER_URL ?? "https://testnet.arcscan.app";

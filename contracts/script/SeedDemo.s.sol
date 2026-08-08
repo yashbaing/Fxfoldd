@@ -4,25 +4,28 @@ pragma solidity ^0.8.20;
 import {Script, console2} from "forge-std/Script.sol";
 import {ObligationRegistry} from "../src/ObligationRegistry.sol";
 import {ClearingRound} from "../src/ClearingRound.sol";
+import {AtomicSettlement} from "../src/AtomicSettlement.sol";
 
 /**
- * @notice Seeds a compact on-chain demo round (8 participants, cyclic multicurrency sample)
- *         proving obligation acceptance + clearing approvals on Arc Testnet.
+ * @notice Seeds a participant-ready clearing round.
+ *         7 SMEs are pre-authorized; one live wallet joins + funds net position.
  */
 contract SeedDemo is Script {
     function run() external {
         uint256 pk = vm.envUint("PRIVATE_KEY");
         address registryAddr = vm.envAddress("OBLIGATION_REGISTRY");
         address clearingAddr = vm.envAddress("CLEARING_ROUND");
+        address settlementAddr = vm.envAddress("ATOMIC_SETTLEMENT");
 
         ObligationRegistry registry = ObligationRegistry(registryAddr);
         ClearingRound clearing = ClearingRound(clearingAddr);
+        AtomicSettlement settlement = AtomicSettlement(settlementAddr);
 
         address[8] memory smes = [
             address(0x1111111111111111111111111111111111111111),
             address(0x2222222222222222222222222222222222222222),
             address(0x3333333333333333333333333333333333333333),
-            address(0x4444444444444444444444444444444444444444),
+            address(0x4444444444444444444444444444444444444444), // SME D slot — live wallet maps here in UI
             address(0x5555555555555555555555555555555555555555),
             address(0x6666666666666666666666666666666666666666),
             address(0x7777777777777777777777777777777777777777),
@@ -57,38 +60,41 @@ contract SeedDemo is Script {
         for (uint256 i = 0; i < 8; i++) participants[i] = smes[i];
 
         ClearingRound.NetPosition[] memory nets = new ClearingRound.NetPosition[](8);
-        nets[0] = ClearingRound.NetPosition(smes[0], int128(-20_000e6), int128(8_000e6), 20_000e6, 0);
-        nets[1] = ClearingRound.NetPosition(smes[1], int128(5_000e6), int128(-3_000e6), 0, 3_000e6);
-        nets[2] = ClearingRound.NetPosition(smes[2], int128(5_000e6), 0, 0, 0);
-        nets[3] = ClearingRound.NetPosition(smes[3], int128(10_000e6), 0, 0, 0);
-        nets[4] = ClearingRound.NetPosition(smes[4], int128(-5_000e6), int128(-5_000e6), 5_000e6, 5_000e6);
-        nets[5] = ClearingRound.NetPosition(smes[5], int128(10_000e6), 0, 0, 0);
-        nets[6] = ClearingRound.NetPosition(smes[6], int128(-5_000e6), 0, 5_000e6, 0);
-        nets[7] = ClearingRound.NetPosition(smes[7], 0, 0, 0, 0);
+        nets[0] = ClearingRound.NetPosition(smes[0], int128(9_108e6), int128(-8_000e6), 0, 8_000e6);
+        nets[1] = ClearingRound.NetPosition(smes[1], 0, int128(-4_528e6), 0, 4_528e6);
+        nets[2] = ClearingRound.NetPosition(smes[2], int128(445e6), int128(-2_000e6), 0, 2_000e6);
+        nets[3] = ClearingRound.NetPosition(smes[3], int128(-15_229e6), int128(25_586e6), 15_229e6, 0);
+        nets[4] = ClearingRound.NetPosition(smes[4], int128(-4_554e6), int128(-20_000e6), 4_554e6, 20_000e6);
+        nets[5] = ClearingRound.NetPosition(smes[5], int128(10_000e6), int128(22_509e6), 0, 0);
+        nets[6] = ClearingRound.NetPosition(smes[6], int128(8_000e6), int128(7_019e6), 0, 0);
+        nets[7] = ClearingRound.NetPosition(smes[7], int128(-7_770e6), int128(-20_586e6), 7_770e6, 20_586e6);
 
         ClearingRound.FxLeg[] memory legs = new ClearingRound.FxLeg[](2);
-        legs[0] = ClearingRound.FxLeg(smes[0], smes[1], USDC, EURC, 3_000e6, 3_000e6, false);
-        legs[1] = ClearingRound.FxLeg(smes[0], smes[0], USDC, EURC, 6_000e6, 6_000e6, true);
+        legs[0] = ClearingRound.FxLeg(smes[0], smes[3], USDC, EURC, 8_680e6, 8_000e6, false);
+        legs[1] = ClearingRound.FxLeg(smes[3], smes[3], USDC, EURC, 6_100e6, 6_100e6, true);
 
-        bytes32 roundHash = keccak256(abi.encodePacked("fxfold-arc-demo", block.timestamp));
+        bytes32 roundHash = keccak256(abi.encodePacked("fxfold-sme-demo", block.timestamp));
         uint256 roundId = clearing.proposeRound(
             roundHash,
             participants,
             ids,
             nets,
             legs,
-            87_000e6, // external liquidity
-            6_100e6, // external fx
-            1_490_000e6, // gross trade
-            310_000e6 // gross fx
+            87_000e6,
+            6_100e6,
+            1_490_000e6,
+            310_000e6
         );
         clearing.operatorApproveAll(roundId);
+
+        // 5 USDC demo deposit for the live SME (faucet-sized proof of net-position funding)
+        settlement.prepareParticipantRound(roundId, 5e6, 0);
 
         vm.stopBroadcast();
 
         console2.log("SEEDED_ROUND_ID", roundId);
+        console2.log("REQUIRED_USDC_DEMO", uint256(5e6));
         console2.log("OBLIGATIONS", ids.length);
-        console2.log("ROUND_HASH");
         console2.logBytes32(roundHash);
     }
 }

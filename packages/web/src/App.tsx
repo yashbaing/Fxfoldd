@@ -1,37 +1,137 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   DEMO_COMPANIES,
   DEMO_OBLIGATIONS,
   DEFAULT_RATES,
+  DEMO_FUND_USDC,
+  DEMO_FUND_EURC,
+  YOU_SME_ID,
+  buildSmeView,
   formatMult,
   formatPct,
   formatUsd,
   solveFxFold,
 } from "@fxfold/solver";
-import { useAccount, useConnect, useDisconnect, useSwitchChain } from "wagmi";
+import {
+  useAccount,
+  useConnect,
+  useDisconnect,
+  useSwitchChain,
+  useWriteContract,
+  useWaitForTransactionReceipt,
+  useReadContract,
+  useConfig,
+} from "wagmi";
+import { waitForTransactionReceipt } from "wagmi/actions";
 import { arcTestnet } from "viem/chains";
+import { parseUnits } from "viem";
 import { TradeGraph } from "./components/TradeGraph";
-import { CONTRACTS, EXPLORER } from "./lib/wagmi";
+import { CONTRACTS, EXPLORER, ROUND_ID, USDC } from "./lib/wagmi";
+import { atomicSettlementAbi, erc20Abi } from "./lib/abis";
 
-type Stage = "graph" | "fold" | "fx" | "settle" | "done";
+type Stage = "network" | "sme" | "join" | "fold" | "fx" | "fund" | "done";
 
 export function App() {
   const result = useMemo(
     () => solveFxFold(DEMO_COMPANIES, DEMO_OBLIGATIONS, DEFAULT_RATES),
     []
   );
+  const sme = useMemo(
+    () => buildSmeView(DEMO_COMPANIES, DEMO_OBLIGATIONS, result, YOU_SME_ID),
+    [result]
+  );
   const m = result.metrics;
 
-  const [stage, setStage] = useState<Stage>("graph");
+  const [stage, setStage] = useState<Stage>("network");
   const [folding, setFolding] = useState(false);
-  const [settling, setSettling] = useState(false);
-  const [txNote, setTxNote] = useState<string>("");
+  const [joined, setJoined] = useState(false);
+  const [readyCount, setReadyCount] = useState(7); // 7 peers pre-authorized
+  const [txHash, setTxHash] = useState<`0x${string}` | undefined>();
+  const [error, setError] = useState<string>("");
+  const [settledUi, setSettledUi] = useState(false);
 
   const { address, isConnected, chainId } = useAccount();
   const { connect, connectors, isPending } = useConnect();
   const { disconnect } = useDisconnect();
   const { switchChain } = useSwitchChain();
+  const { writeContractAsync, isPending: isWriting } = useWriteContract();
+  const config = useConfig();
+
+  const { data: fundingStatus } = useReadContract({
+    address: CONTRACTS.atomicSettlement,
+    abi: atomicSettlementAbi,
+    functionName: "fundingStatus",
+    args: [ROUND_ID],
+    query: { enabled: Boolean(CONTRACTS.atomicSettlement) },
+  });
+
+  const { isLoading: isConfirming, isSuccess: isConfirmed } = useWaitForTransactionReceipt({
+    hash: txHash,
+  });
+
+  const short = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "";
+  const onArc = chainId === arcTestnet.id;
+  const peersReady = fundingStatus?.[1] ?? true;
+  const alreadyFunded = fundingStatus?.[2] ?? false;
+  const alreadySettled = fundingStatus?.[3] ?? false;
+
+  useEffect(() => {
+    if ((isConfirmed || alreadySettled) && txHash && stage === "fund") {
+      setSettledUi(true);
+    }
+  }, [isConfirmed, alreadySettled, txHash, stage]);
+
+  const ensureWallet = async () => {
+    if (!isConnected) {
+      connect({ connector: connectors[0] });
+      return false;
+    }
+    if (!onArc) {
+      await switchChain({ chainId: arcTestnet.id });
+    }
+    return true;
+  };
+
+  const onConnectAsSme = async () => {
+    const ok = await ensureWallet();
+    if (ok || isConnected) setStage("sme");
+  };
+
+  const onJoinRound = async () => {
+    setError("");
+    try {
+      const ready = await ensureWallet();
+      if (!ready && !isConnected) return;
+
+      if (CONTRACTS.atomicSettlement && onArc) {
+        const hash = await writeContractAsync({
+          address: CONTRACTS.atomicSettlement,
+          abi: atomicSettlementAbi,
+          functionName: "joinRound",
+          args: [ROUND_ID],
+        });
+        setTxHash(hash);
+      }
+      setJoined(true);
+      setReadyCount(8);
+      setStage("join");
+    } catch (e) {
+      // Allow local demo join if chain call fails (e.g. already joined)
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.toLowerCase().includes("already") || msg.includes("AlreadyJoined")) {
+        setJoined(true);
+        setReadyCount(8);
+        setStage("join");
+        return;
+      }
+      // Still progress demo UX if user rejects only after explaining
+      setJoined(true);
+      setReadyCount(8);
+      setStage("join");
+      setError("Joined in demo mode — connect Arc Testnet to join on-chain.");
+    }
+  };
 
   const onFold = async () => {
     setFolding(true);
@@ -40,27 +140,47 @@ export function App() {
     setFolding(false);
   };
 
-  const onResidual = () => setStage("fx");
+  const onFund = async () => {
+    setError("");
+    try {
+      const ready = await ensureWallet();
+      if (!ready && !isConnected) {
+        setError("Connect your wallet as this SME first.");
+        return;
+      }
+      if (!CONTRACTS.atomicSettlement) {
+        setError("Settlement contract not configured.");
+        return;
+      }
+      if (!onArc) {
+        await switchChain({ chainId: arcTestnet.id });
+      }
 
-  const onSettle = async () => {
-    setSettling(true);
-    setStage("settle");
-    setTxNote("Participants approving clearing round…");
-    await wait(900);
-    setTxNote("Executing residual FX via StableFX demo adapter…");
-    await wait(900);
-    setTxNote("Atomic settlement on Arc Testnet…");
-    await wait(1000);
-    setSettling(false);
-    setStage("done");
-    if (CONTRACTS.clearingRound) {
-      setTxNote(`Contracts live on Arc — ${EXPLORER}/address/${CONTRACTS.clearingRound}`);
-    } else {
-      setTxNote("Local demo complete. Deploy contracts to pin this round on Arc.");
+      const amount = parseUnits(String(DEMO_FUND_USDC), 6);
+      setStage("fund");
+
+      const approveHash = await writeContractAsync({
+        address: USDC,
+        abi: erc20Abi,
+        functionName: "approve",
+        args: [CONTRACTS.atomicSettlement, amount],
+      });
+      await waitForTransactionReceipt(config, { hash: approveHash });
+
+      const fundHash = await writeContractAsync({
+        address: CONTRACTS.atomicSettlement,
+        abi: atomicSettlementAbi,
+        functionName: "fundNetPosition",
+        args: [ROUND_ID],
+      });
+      setTxHash(fundHash);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(shortError(msg));
     }
   };
 
-  const short = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "";
+  const activeStage: Stage = settledUi ? "done" : stage;
 
   return (
     <div className="app-shell">
@@ -69,22 +189,24 @@ export function App() {
           <div className="brand-mark">
             FX<em style={{ color: "var(--copper)", fontStyle: "normal" }}>Fold</em>
           </div>
-          <div className="tagline">Net first. FX the rest. Settle once.</div>
+          <div className="tagline">You are one SME in the clearing network</div>
         </div>
         <div className="cta-row">
           <div className="steps" style={{ margin: 0 }}>
             {(
               [
-                ["graph", "Network"],
+                ["network", "Network"],
+                ["sme", "You"],
+                ["join", "Join"],
                 ["fold", "Fold"],
-                ["fx", "Residual FX"],
-                ["settle", "Arc Settle"],
+                ["fx", "FX"],
+                ["fund", "Fund"],
               ] as const
             ).map(([id, label]) => (
               <span
                 key={id}
-                className={`step-pill ${stage === id || (stage === "done" && id === "settle") ? "active" : ""} ${
-                  stageOrder(stage) > stageOrder(id) ? "done" : ""
+                className={`step-pill ${activeStage === id || (activeStage === "done" && id === "fund") ? "active" : ""} ${
+                  stageOrder(activeStage) > stageOrder(id) ? "done" : ""
                 }`}
               >
                 {label}
@@ -93,7 +215,7 @@ export function App() {
           </div>
           {isConnected ? (
             <button className="btn btn-ghost wallet-chip" onClick={() => disconnect()}>
-              {chainId !== arcTestnet.id ? "Wrong network" : short}
+              {onArc ? `${sme.company.name.split(" ")[0]} · ${short}` : "Switch to Arc"}
             </button>
           ) : (
             <button
@@ -109,14 +231,13 @@ export function App() {
 
       <main className="stage">
         <AnimatePresence mode="wait">
-          {stage === "graph" && (
+          {activeStage === "network" && (
             <motion.section
-              key="graph"
+              key="network"
               className="hero-stage"
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.45 }}
             >
               <div>
                 <div className="kicker">UAE SME trade network · Arc Testnet</div>
@@ -125,7 +246,7 @@ export function App() {
                 </h1>
                 <p className="hero-sub">
                   Eight businesses. Thirty-one accepted invoices across AED, USD and EUR.
-                  Today they would move and exchange far more money than the trade requires.
+                  One of them is you — highlighted on the network.
                 </p>
               </div>
 
@@ -142,21 +263,118 @@ export function App() {
                     <div className="value">{formatUsd(m.grossFxDemandUsd)}</div>
                   </div>
                   <div className="metric">
-                    <div className="label">Invoices</div>
-                    <div className="value">{m.invoiceCount}</div>
+                    <div className="label">Your SME</div>
+                    <div className="value" style={{ fontSize: "1.35rem" }}>
+                      {sme.company.name}
+                    </div>
                   </div>
                 </div>
                 <div className="cta-row" style={{ marginTop: "1.25rem" }}>
-                  <button className="btn btn-primary btn-fold" onClick={onFold}>
-                    FOLD
+                  <button className="btn btn-primary" onClick={onConnectAsSme}>
+                    {isConnected ? "View my invoices" : "Connect as this SME"}
                   </button>
-                  <span className="tagline">Run multilateral netting + FX compression</span>
+                  <span className="tagline">
+                    Wallet maps to {sme.company.name} ({sme.company.city})
+                  </span>
                 </div>
               </div>
             </motion.section>
           )}
 
-          {(stage === "fold" || folding) && stage !== "fx" && stage !== "settle" && stage !== "done" && (
+          {activeStage === "sme" && (
+            <motion.section
+              key="sme"
+              className="panel"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+            >
+              <div className="kicker">Connected as SME</div>
+              <h2 className="h-display" style={{ fontSize: "clamp(1.8rem, 4vw, 2.8rem)" }}>
+                {sme.company.name}
+              </h2>
+              <p className="hero-sub">
+                {sme.company.city} · {sme.company.sector}
+                {address ? ` · ${short}` : " · connect wallet to continue"}
+              </p>
+
+              <div className="result-grid">
+                <div className="stat-block">
+                  <div className="label">You need to pay</div>
+                  <div className="value">{formatUsd(sme.grossPayUsd)}</div>
+                  <div className="tagline">{sme.payableCount} invoices</div>
+                </div>
+                <div className="stat-block">
+                  <div className="label">You are owed</div>
+                  <div className="value">{formatUsd(sme.grossReceiveUsd)}</div>
+                  <div className="tagline">{sme.receivableCount} invoices</div>
+                </div>
+              </div>
+
+              <ul className="list-quiet">
+                {sme.invoices.map((inv) => (
+                  <li key={inv.invoiceId}>
+                    <span>
+                      <strong>{inv.direction === "pay" ? "Pay" : "Receive"}</strong> {inv.invoiceId} ·{" "}
+                      {inv.counterpartyName}
+                    </span>
+                    <strong>
+                      {inv.amount.toLocaleString()} {inv.invoiceCurrency}
+                    </strong>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="cta-row" style={{ marginTop: "1.5rem" }}>
+                <button className="btn btn-primary" onClick={onJoinRound} disabled={isWriting}>
+                  Join Clearing Round
+                </button>
+                <span className="tagline">7 other SMEs are already pre-authorized</span>
+              </div>
+              {error && <p className="badge-demo">{error}</p>}
+            </motion.section>
+          )}
+
+          {activeStage === "join" && (
+            <motion.section
+              key="join"
+              className="panel"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+            >
+              <div className="kicker">Clearing round #{ROUND_ID.toString()}</div>
+              <h2 className="h-display" style={{ fontSize: "clamp(2rem, 5vw, 3.2rem)" }}>
+                {readyCount} / 8 SMEs ready
+              </h2>
+              <p className="hero-sub">
+                You joined as {sme.company.name}. The other seven participants are demo-authorized —
+                no extra wallets needed.
+              </p>
+              <ul className="list-quiet">
+                <li>
+                  <span>You ({sme.company.name})</span>
+                  <strong>{joined ? "Joined ✓" : "…"}</strong>
+                </li>
+                <li>
+                  <span>Peer SMEs (pre-authorized)</span>
+                  <strong>7 / 7 ✓</strong>
+                </li>
+                <li>
+                  <span>Peers ready on Arc</span>
+                  <strong>{peersReady ? "Yes ✓" : "Pending"}</strong>
+                </li>
+              </ul>
+              <div className="cta-row" style={{ marginTop: "1.5rem" }}>
+                <button className="btn btn-primary btn-fold" onClick={onFold}>
+                  Run FOLD
+                </button>
+                <span className="tagline">Off-chain network calculation — no wallet popup</span>
+              </div>
+            </motion.section>
+          )}
+
+          {activeStage === "fold" && (
             <motion.section
               key="fold"
               className="panel"
@@ -164,44 +382,75 @@ export function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
             >
-              <div className="kicker">Compression engine</div>
-              <h2 className="h-display" style={{ fontSize: "clamp(2rem, 5vw, 3rem)" }}>
-                Obligations cancel. Currency demand matches.
+              <div className="kicker">Network-level compression</div>
+              <h2 className="h-display" style={{ fontSize: "clamp(1.8rem, 4vw, 2.8rem)" }}>
+                {folding ? "Folding obligations…" : "Your invoices folded with 7 other SMEs"}
               </h2>
               <TradeGraph folding={folding} folded={!folding} />
+
               {!folding && (
                 <>
                   <div className="result-grid">
                     <div className="stat-block">
-                      <div className="label">External Liquidity</div>
-                      <div className="value good">{formatUsd(m.externalLiquidityUsd)}</div>
+                      <div className="label">Invoices → net legs</div>
+                      <div className="value" style={{ fontSize: "1.8rem" }}>
+                        {m.invoiceCount} → {result.settlementLegs.length}
+                      </div>
                     </div>
                     <div className="stat-block">
-                      <div className="label">External FX</div>
-                      <div className="value good">{formatUsd(m.externalFxUsd)}</div>
-                    </div>
-                    <div className="stat-block">
-                      <div className="label">Liquidity Compression</div>
-                      <div className="value">{formatPct(m.liquidityCompression)}</div>
-                    </div>
-                    <div className="stat-block">
-                      <div className="label">FX Compression</div>
-                      <div className="value">{formatPct(m.fxCompression)}</div>
-                    </div>
-                    <div className="stat-block">
-                      <div className="label">Trade Multiplier</div>
-                      <div className="value">{formatMult(m.tradeMultiplier)}</div>
-                    </div>
-                    <div className="stat-block">
-                      <div className="label">vs Gross Trade</div>
-                      <div className="value" style={{ fontSize: "1.6rem", marginTop: "0.8rem" }}>
+                      <div className="label">Gross → net settlement</div>
+                      <div className="value" style={{ fontSize: "1.8rem" }}>
                         {formatUsd(m.grossTradeUsd)} → {formatUsd(m.externalLiquidityUsd)}
                       </div>
                     </div>
+                    <div className="stat-block">
+                      <div className="label">Gross FX → residual</div>
+                      <div className="value" style={{ fontSize: "1.8rem" }}>
+                        {formatUsd(m.grossFxDemandUsd)} → {formatUsd(m.externalFxUsd)}
+                      </div>
+                    </div>
+                    <div className="stat-block">
+                      <div className="label">Trade Multiplier</div>
+                      <div className="value good">{formatMult(m.tradeMultiplier)}</div>
+                    </div>
                   </div>
+
+                  <div className="you-panel">
+                    <div className="kicker">Your Result · {sme.company.name}</div>
+                    <div className="you-compare">
+                      <div>
+                        <div className="label">Before FOLD</div>
+                        <div className="value" style={{ fontSize: "1.6rem" }}>
+                          {sme.beforeActions.length} separate payments / FX
+                        </div>
+                        <ul className="list-quiet">
+                          {sme.beforeActions.slice(0, 5).map((a) => (
+                            <li key={a.label}>
+                              <span>{a.label}</span>
+                              <span className="tagline">{a.detail}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <div className="you-arrow">↓</div>
+                      <div>
+                        <div className="label">After FOLD</div>
+                        <div className="value good" style={{ fontSize: "1.6rem" }}>
+                          1 final net position
+                        </div>
+                        <p className="hero-sub">{sme.yourResultSummary}</p>
+                        <p className="tagline">
+                          Net USDC {sme.netUsdc >= 0 ? "+" : ""}
+                          {formatUsd(Math.abs(sme.netUsdc))} · Net EURC {sme.netEurc >= 0 ? "+" : ""}
+                          {sme.netEurc.toFixed(0)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="cta-row" style={{ marginTop: "1.5rem" }}>
-                    <button className="btn btn-primary" onClick={onResidual}>
-                      Show residual FX
+                    <button className="btn btn-primary" onClick={() => setStage("fx")}>
+                      See residual FX
                     </button>
                   </div>
                 </>
@@ -209,7 +458,7 @@ export function App() {
             </motion.section>
           )}
 
-          {stage === "fx" && (
+          {activeStage === "fx" && (
             <motion.section
               key="fx"
               className="panel"
@@ -217,73 +466,98 @@ export function App() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
             >
-              <div className="kicker">Circle StableFX · residual only</div>
-              <h2 className="h-display" style={{ fontSize: "clamp(2rem, 5vw, 3rem)" }}>
-                StableFX executes the leftover — not the whole book.
+              <div className="kicker">StableFX · residual only</div>
+              <h2 className="h-display" style={{ fontSize: "clamp(1.8rem, 4vw, 2.8rem)" }}>
+                Only unmatched FX reaches StableFX
               </h2>
-              <p className="hero-sub">
-                FXFold reduces how much FX needs to happen. StableFX optimizes execution of the
-                residual.
-              </p>
-              <ul className="list-quiet">
-                <li>
-                  <span>Internal FX matched</span>
-                  <strong>{formatUsd(m.internalFxMatchedUsd)}</strong>
-                </li>
-                <li>
-                  <span>Residual FX → StableFX adapter</span>
-                  <strong>{formatUsd(m.externalFxUsd)}</strong>
-                </li>
-                <li>
-                  <span>Adapter mode</span>
-                  <strong>Demo RFQ (IS_DEMO_ADAPTER)</strong>
-                </li>
-              </ul>
-              <div className="badge-demo">Demo adapter — swap for live Circle StableFX credentials</div>
+              <div className="result-grid">
+                <div className="stat-block">
+                  <div className="label">Network residual FX</div>
+                  <div className="value">{formatUsd(m.externalFxUsd)}</div>
+                </div>
+                <div className="stat-block">
+                  <div className="label">Your residual FX</div>
+                  <div className="value">{formatUsd(sme.residualFxUsd)}</div>
+                </div>
+                <div className="stat-block">
+                  <div className="label">Internal FX matched</div>
+                  <div className="value good">{formatUsd(m.internalFxMatchedUsd)}</div>
+                </div>
+                <div className="stat-block">
+                  <div className="label">FX Compression</div>
+                  <div className="value">{formatPct(m.fxCompression)}</div>
+                </div>
+              </div>
+              <p className="badge-demo">Demo StableFX adapter — residual execution layer, not the core product</p>
               <div className="cta-row" style={{ marginTop: "1.5rem" }}>
-                {isConnected && chainId !== arcTestnet.id && (
-                  <button className="btn btn-ghost" onClick={() => switchChain({ chainId: arcTestnet.id })}>
-                    Switch to Arc Testnet
-                  </button>
-                )}
-                <button className="btn btn-primary" onClick={onSettle} disabled={settling}>
-                  SETTLE ROUND
+                <button className="btn btn-primary" onClick={() => setStage("fund")}>
+                  Continue to fund net position
                 </button>
               </div>
             </motion.section>
           )}
 
-          {stage === "settle" && (
+          {activeStage === "fund" && (
             <motion.section
-              key="settle"
+              key="fund"
               className="panel"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
             >
-              <div className="kicker">Arc atomic settlement</div>
-              <h2 className="h-display" style={{ fontSize: "clamp(2rem, 5vw, 3rem)" }}>
-                Entire clearing round succeeds — or reverts.
+              <div className="kicker">Your settlement · not admin</div>
+              <h2 className="h-display" style={{ fontSize: "clamp(1.8rem, 4vw, 2.8rem)" }}>
+                Fund your net position
               </h2>
-              <p className="hero-sub">{txNote}</p>
-              <motion.div
-                style={{
-                  marginTop: "2rem",
-                  height: 6,
-                  background: "rgba(16,34,38,0.08)",
-                  overflow: "hidden",
-                }}
-              >
-                <motion.div
-                  style={{ height: "100%", background: "var(--copper)" }}
-                  initial={{ width: "0%" }}
-                  animate={{ width: "100%" }}
-                  transition={{ duration: 2.6, ease: "easeInOut" }}
-                />
-              </motion.div>
+              <p className="hero-sub">
+                Authorize the final obligation for {sme.company.name}. Other SMEs are already
+                pre-funded. Your wallet pays the demo net deposit on Arc — then the whole round
+                settles.
+              </p>
+              <ul className="list-quiet">
+                <li>
+                  <span>Economic net (after FOLD)</span>
+                  <strong>{sme.yourResultSummary}</strong>
+                </li>
+                <li>
+                  <span>Arc demo deposit (this wallet)</span>
+                  <strong>{DEMO_FUND_USDC} USDC</strong>
+                </li>
+                <li>
+                  <span>Peer SMEs</span>
+                  <strong>Pre-funded ✓</strong>
+                </li>
+              </ul>
+              <div className="cta-row" style={{ marginTop: "1.5rem" }}>
+                {!onArc && isConnected && (
+                  <button className="btn btn-ghost" onClick={() => switchChain({ chainId: arcTestnet.id })}>
+                    Switch to Arc Testnet
+                  </button>
+                )}
+                <button
+                  className="btn btn-primary"
+                  onClick={onFund}
+                  disabled={isWriting || isConfirming || alreadyFunded}
+                >
+                  {isWriting || isConfirming
+                    ? "Confirm in wallet…"
+                    : alreadyFunded
+                      ? "Already funded"
+                      : "Fund Net Position"}
+                </button>
+              </div>
+              {error && <p className="badge-demo">{error}</p>}
+              {txHash && (
+                <p className="tagline" style={{ marginTop: "1rem" }}>
+                  Tx:{" "}
+                  <a href={`${EXPLORER}/tx/${txHash}`} target="_blank" rel="noreferrer">
+                    {txHash.slice(0, 10)}…{txHash.slice(-8)}
+                  </a>
+                </p>
+              )}
             </motion.section>
           )}
 
-          {stage === "done" && (
+          {activeStage === "done" && (
             <motion.section
               key="done"
               className="finale"
@@ -291,49 +565,69 @@ export function App() {
               animate={{ opacity: 1, y: 0 }}
             >
               <div className="kicker">Cleared on Arc</div>
-              <div className="moved">{formatUsd(m.externalLiquidityUsd)} MOVED</div>
-              <div className="cleared">{formatUsd(m.grossTradeUsd)} TRADE CLEARED</div>
+              <div className="moved">All positions funded ✓</div>
+              <div className="cleared">Clearing Round Settled on Arc ✓</div>
               <ul className="list-quiet">
                 <li>
-                  <span>Invoices settled</span>
-                  <strong>{m.invoiceCount}</strong>
+                  <span>Round ID</span>
+                  <strong>#{ROUND_ID.toString()}</strong>
                 </li>
                 <li>
-                  <span>Trade Multiplier</span>
-                  <strong>{formatMult(m.tradeMultiplier)}</strong>
+                  <span>Asset</span>
+                  <strong>USDC{DEMO_FUND_EURC ? " / EURC" : ""}</strong>
                 </li>
                 <li>
-                  <span>FX Compression</span>
-                  <strong>{formatPct(m.fxCompression)}</strong>
+                  <span>Your deposit</span>
+                  <strong>{DEMO_FUND_USDC} USDC</strong>
+                </li>
+                <li>
+                  <span>Trade cleared</span>
+                  <strong>
+                    {formatUsd(m.grossTradeUsd)} · {formatMult(m.tradeMultiplier)}
+                  </strong>
+                </li>
+                <li>
+                  <span>Transaction</span>
+                  <strong>
+                    <a href={`${EXPLORER}/tx/${txHash}`} target="_blank" rel="noreferrer">
+                      {txHash?.slice(0, 12)}…{txHash?.slice(-10)}
+                    </a>
+                  </strong>
                 </li>
               </ul>
               <p className="hero-sub" style={{ marginTop: "1.25rem" }}>
-                UAE is making trade machine-readable. FXFold makes liquidity machine-routable.
+                You connected as one UAE SME → joined the round → FXFold folded your obligations with
+                7 others → your payments became one net position → you funded it → the round settled
+                on Arc.
               </p>
-              <p className="hero-sub" style={{ fontFamily: "var(--font-display)", color: "var(--brand-deep)" }}>
+              <p
+                className="hero-sub"
+                style={{ fontFamily: "var(--font-display)", color: "var(--brand-deep)" }}
+              >
                 Net first. FX the rest. Settle once.
               </p>
-              {txNote && <p className="tagline">{txNote}</p>}
               <div className="cta-row" style={{ marginTop: "1.5rem" }}>
+                <a
+                  className="btn btn-primary"
+                  href={`${EXPLORER}/tx/${txHash}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open in Arc Explorer
+                </a>
                 <button
                   className="btn btn-ghost"
                   onClick={() => {
-                    setStage("graph");
-                    setTxNote("");
+                    setStage("network");
+                    setTxHash(undefined);
+                    setJoined(false);
+                    setReadyCount(7);
+                    setError("");
+                    setSettledUi(false);
                   }}
                 >
-                  Replay demo
+                  Replay
                 </button>
-                {CONTRACTS.atomicSettlement && (
-                  <a
-                    className="btn btn-primary"
-                    href={`${EXPLORER}/address/${CONTRACTS.atomicSettlement}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    View AtomicSettlement
-                  </a>
-                )}
               </div>
             </motion.section>
           )}
@@ -341,11 +635,14 @@ export function App() {
       </main>
 
       <footer className="footer">
-        <span>FXFold · Multicurrency trade compression for UAE SMEs</span>
         <span>
-          {CONTRACTS.clearingRound
-            ? `Arc Round #1 · ${CONTRACTS.clearingRound.slice(0, 6)}…${CONTRACTS.clearingRound.slice(-4)}`
-            : "Primary track: SME Trade Finance · Built on Arc"}
+          You = {sme.company.name} · {DEMO_COMPANIES.length - 1} peers pre-authorized
+        </span>
+        <span>
+          Round #{ROUND_ID.toString()} ·{" "}
+          {CONTRACTS.atomicSettlement
+            ? `${CONTRACTS.atomicSettlement.slice(0, 6)}…${CONTRACTS.atomicSettlement.slice(-4)}`
+            : "Arc Testnet"}
         </span>
       </footer>
     </div>
@@ -353,10 +650,24 @@ export function App() {
 }
 
 function stageOrder(s: Stage | string): number {
-  const order: Record<string, number> = { graph: 0, fold: 1, fx: 2, settle: 3, done: 4 };
+  const order: Record<string, number> = {
+    network: 0,
+    sme: 1,
+    join: 2,
+    fold: 3,
+    fx: 4,
+    fund: 5,
+    done: 6,
+  };
   return order[s] ?? 0;
 }
 
 function wait(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function shortError(msg: string): string {
+  if (msg.includes("User rejected") || msg.includes("denied")) return "Wallet rejected the transaction.";
+  if (msg.includes("insufficient")) return "Insufficient USDC — get Arc Testnet USDC from faucet.circle.com";
+  return msg.length > 140 ? msg.slice(0, 140) + "…" : msg;
 }

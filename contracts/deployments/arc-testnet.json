@@ -2,19 +2,22 @@
   "network": "arc-testnet",
   "chainId": 5042002,
   "deployer": "0x08D5dBdFd7662befA61d1a4e60bA320b48467DfE",
-  "obligationRegistry": "0xdCEA9245A47D5a75333E3510015D431BF93B3963",
-  "clearingRound": "0x2e3B67b1457801F70875B77804ed2b76963C5160",
-  "atomicSettlement": "0x09B8B6b85907bfa62F8e9B76d20fFd4d4547BC37",
-  "stableFxAdapter": "0x35FBbf682006867968249327bB5E53734eE427D0",
+  "obligationRegistry": "0xabb7649BCa61379536197D420B0D37f85CdfE862",
+  "clearingRound": "0x60171ca8455F41A82c041607e4dE069BecAF6d1a",
+  "atomicSettlement": "0x72721853fb5253AaCf19d567A529dF0664bd5Cf1",
+  "stableFxAdapter": "0xF092eB2152dd9AD2CaF3Dd76c44194De331263cA",
   "usdc": "0x3600000000000000000000000000000000000000",
   "eurc": "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a",
   "seededRoundId": 1,
   "seededObligations": 12,
+  "demoFundUsdc": "5000000",
+  "youSme": "D",
   "roundStatus": "Approved",
+  "peersReady": true,
   "explorer": {
-    "obligationRegistry": "https://testnet.arcscan.app/address/0xdCEA9245A47D5a75333E3510015D431BF93B3963",
-    "clearingRound": "https://testnet.arcscan.app/address/0x2e3B67b1457801F70875B77804ed2b76963C5160",
-    "atomicSettlement": "https://testnet.arcscan.app/address/0x09B8B6b85907bfa62F8e9B76d20fFd4d4547BC37",
-    "stableFxAdapter": "https://testnet.arcscan.app/address/0x35FBbf682006867968249327bB5E53734eE427D0"
+    "obligationRegistry": "https://testnet.arcscan.app/address/0xabb7649BCa61379536197D420B0D37f85CdfE862",
+    "clearingRound": "https://testnet.arcscan.app/address/0x60171ca8455F41A82c041607e4dE069BecAF6d1a",
+    "atomicSettlement": "https://testnet.arcscan.app/address/0x72721853fb5253AaCf19d567A529dF0664bd5Cf1",
+    "stableFxAdapter": "https://testnet.arcscan.app/address/0xF092eB2152dd9AD2CaF3Dd76c44194De331263cA"
   }
 }

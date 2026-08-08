@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { DEMO_COMPANIES, DEMO_OBLIGATIONS } from "@fxfold/solver";
+import { DEMO_COMPANIES, DEMO_OBLIGATIONS, YOU_SME_ID } from "@fxfold/solver";
 
 const positions: Record<string, { x: number; y: number }> = {
   A: { x: 180, y: 120 },
@@ -21,23 +21,22 @@ const currencyColor = (ccy: string) => {
 export function TradeGraph({
   folding,
   folded,
+  youId = YOU_SME_ID,
+  highlightYou = true,
 }: {
   folding: boolean;
   folded: boolean;
+  youId?: string;
+  highlightYou?: boolean;
 }) {
   return (
     <div className="graph-wrap" aria-label="UAE SME obligation graph">
       <svg viewBox="0 0 960 520" role="img">
-        <defs>
-          <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
-            <feGaussianBlur stdDeviation="1.2" />
-          </filter>
-        </defs>
-
         {DEMO_OBLIGATIONS.map((o, idx) => {
           const a = positions[o.debtorId];
           const b = positions[o.creditorId];
           if (!a || !b) return null;
+          const involvesYou = o.debtorId === youId || o.creditorId === youId;
           const midX = (a.x + b.x) / 2 + ((idx % 5) - 2) * 6;
           const midY = (a.y + b.y) / 2 + ((idx % 3) - 1) * 8;
           return (
@@ -45,16 +44,16 @@ export function TradeGraph({
               key={o.invoiceId}
               d={`M ${a.x} ${a.y} Q ${midX} ${midY} ${b.x} ${b.y}`}
               fill="none"
-              stroke={currencyColor(o.invoiceCurrency)}
-              strokeWidth={folded ? 0.6 : 1.6}
-              strokeOpacity={folded ? 0.15 : 0.55}
+              stroke={involvesYou ? "#c45c26" : currencyColor(o.invoiceCurrency)}
+              strokeWidth={involvesYou && !folded ? 2.4 : folded ? 0.6 : 1.4}
+              strokeOpacity={folded ? 0.12 : involvesYou ? 0.85 : 0.4}
               initial={false}
               animate={
                 folding
                   ? { pathLength: [1, 0.05], opacity: [0.55, 0.1] }
                   : folded
                     ? { pathLength: 0.08, opacity: 0.12 }
-                    : { pathLength: 1, opacity: 0.55 }
+                    : { pathLength: 1, opacity: involvesYou ? 0.85 : 0.4 }
               }
               transition={{ duration: 1.1, delay: (idx % 10) * 0.03 }}
             />
@@ -63,14 +62,29 @@ export function TradeGraph({
 
         {DEMO_COMPANIES.map((c, i) => {
           const p = positions[c.id];
+          const isYou = highlightYou && c.id === youId;
           return (
             <g key={c.id}>
+              {isYou && (
+                <motion.circle
+                  cx={p.x}
+                  cy={p.y}
+                  r={34}
+                  fill="none"
+                  stroke="#c45c26"
+                  strokeWidth={2}
+                  strokeOpacity={0.45}
+                  initial={{ scale: 0.7, opacity: 0 }}
+                  animate={{ scale: [1, 1.08, 1], opacity: 1 }}
+                  transition={{ duration: 2.2, repeat: Infinity }}
+                />
+              )}
               <motion.circle
                 cx={p.x}
                 cy={p.y}
-                r={folded ? 18 : 22}
-                fill="#f7f4ef"
-                stroke="#0b4f56"
+                r={isYou ? 26 : folded ? 18 : 22}
+                fill={isYou ? "#c45c26" : "#f7f4ef"}
+                stroke={isYou ? "#9a4215" : "#0b4f56"}
                 strokeWidth={2}
                 initial={{ scale: 0.8, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
@@ -83,19 +97,19 @@ export function TradeGraph({
                 fontFamily="Syne, sans-serif"
                 fontWeight={700}
                 fontSize="12"
-                fill="#07363c"
+                fill={isYou ? "#fff8f2" : "#07363c"}
               >
-                {c.id}
+                {isYou ? "YOU" : c.id}
               </text>
               <text
                 x={p.x}
-                y={p.y + 36}
+                y={p.y + (isYou ? 42 : 36)}
                 textAnchor="middle"
                 fontFamily="IBM Plex Sans, sans-serif"
                 fontSize="11"
-                fill="#3a5458"
+                fill={isYou ? "#9a4215" : "#3a5458"}
               >
-                {c.name.split(" ")[0]}
+                {isYou ? c.name : c.name.split(" ")[0]}
               </text>
             </g>
           );

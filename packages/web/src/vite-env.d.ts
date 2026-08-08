@@ -10,6 +10,7 @@ interface ImportMetaEnv {
   readonly VITE_CLEARING_ROUND?: string;
   readonly VITE_ATOMIC_SETTLEMENT?: string;
   readonly VITE_STABLEFX_ADAPTER?: string;
+  readonly VITE_ROUND_ID?: string;
 }
 
 interface ImportMeta {
