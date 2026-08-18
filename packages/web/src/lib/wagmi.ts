@@ -15,8 +15,6 @@ export const wagmiConfig = createConfig({
 
 export const USDC = (import.meta.env.VITE_USDC_ADDRESS ??
   "0x3600000000000000000000000000000000000000") as `0x${string}`;
-export const EURC = (import.meta.env.VITE_EURC_ADDRESS ??
-  "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a") as `0x${string}`;
 
 export const CONTRACTS = {
   obligationRegistry: (import.meta.env.VITE_OBLIGATION_REGISTRY ?? "") as `0x${string}`,

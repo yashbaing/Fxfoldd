@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { m, useReducedMotion } from "framer-motion";
 import { DEMO_COMPANIES, DEMO_OBLIGATIONS, YOU_SME_ID } from "@fxfold/solver";
 
 const positions: Record<string, { x: number; y: number }> = {
@@ -29,6 +29,8 @@ export function TradeGraph({
   youId?: string;
   highlightYou?: boolean;
 }) {
+  const reducedMotion = Boolean(useReducedMotion());
+
   return (
     <div className="graph-wrap" aria-label="UAE SME obligation graph">
       <svg viewBox="0 0 960 520" role="img">
@@ -40,7 +42,7 @@ export function TradeGraph({
           const midX = (a.x + b.x) / 2 + ((idx % 5) - 2) * 6;
           const midY = (a.y + b.y) / 2 + ((idx % 3) - 1) * 8;
           return (
-            <motion.path
+            <m.path
               key={o.invoiceId}
               d={`M ${a.x} ${a.y} Q ${midX} ${midY} ${b.x} ${b.y}`}
               fill="none"
@@ -55,7 +57,10 @@ export function TradeGraph({
                     ? { pathLength: 0.08, opacity: 0.12 }
                     : { pathLength: 1, opacity: involvesYou ? 0.85 : 0.4 }
               }
-              transition={{ duration: 1.1, delay: (idx % 10) * 0.03 }}
+              transition={{
+                duration: reducedMotion ? 0.01 : 0.45,
+                delay: reducedMotion ? 0 : (idx % 10) * 0.02,
+              }}
             />
           );
         })}
@@ -66,7 +71,7 @@ export function TradeGraph({
           return (
             <g key={c.id}>
               {isYou && (
-                <motion.circle
+                <m.circle
                   cx={p.x}
                   cy={p.y}
                   r={34}
@@ -74,21 +79,34 @@ export function TradeGraph({
                   stroke="#c45c26"
                   strokeWidth={2}
                   strokeOpacity={0.45}
-                  initial={{ scale: 0.7, opacity: 0 }}
-                  animate={{ scale: [1, 1.08, 1], opacity: 1 }}
-                  transition={{ duration: 2.2, repeat: Infinity }}
+                  initial={reducedMotion ? false : { opacity: 0, transform: "scale(0.7)" }}
+                  animate={
+                    reducedMotion
+                      ? { opacity: 1, transform: "scale(1)" }
+                      : { opacity: 1, transform: ["scale(1)", "scale(1.08)", "scale(1)"] }
+                  }
+                  transition={
+                    reducedMotion
+                      ? { duration: 0.01 }
+                      : { duration: 2.2, repeat: Infinity }
+                  }
                 />
               )}
-              <motion.circle
+              <m.circle
                 cx={p.x}
                 cy={p.y}
                 r={isYou ? 26 : folded ? 18 : 22}
                 fill={isYou ? "#c45c26" : "#f7f4ef"}
                 stroke={isYou ? "#9a4215" : "#0b4f56"}
                 strokeWidth={2}
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                transition={{ delay: i * 0.05, type: "spring", stiffness: 120 }}
+                initial={reducedMotion ? false : { opacity: 0, transform: "scale(0.8)" }}
+                animate={{ opacity: 1, transform: "scale(1)" }}
+                transition={{
+                  delay: reducedMotion ? 0 : i * 0.05,
+                  type: reducedMotion ? "tween" : "spring",
+                  stiffness: 120,
+                  duration: reducedMotion ? 0.01 : undefined,
+                }}
               />
               <text
                 x={p.x}
