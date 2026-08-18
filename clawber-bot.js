@@ -186,6 +186,13 @@ function update(input) {
     return { type: "attack", targetId: focus.id };
   }
 
+  const executeMode = focus.health <= 22;
+  const botNum = input.botNumber ?? 0;
+
+  if (executeMode || botNum === 0) {
+    return moveToward(self, focus.position.x, focus.position.y, input.tiles);
+  }
+
   if (self.health <= 28) {
     const nearest = enemies.reduce((a, b) =>
       dist(self.position, a.position) < dist(self.position, b.position) ? a : b
@@ -208,6 +215,6 @@ function update(input) {
     return { type: "move", direction: wiggle };
   }
 
-  const orbit = orbitPoint(focus, input.botNumber ?? 0);
+  const orbit = orbitPoint(focus, botNum);
   return moveToward(self, orbit.x, orbit.y, input.tiles);
 }
